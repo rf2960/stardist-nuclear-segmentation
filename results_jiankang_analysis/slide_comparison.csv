@@ -1,0 +1,4 @@
+file,sha256_prefix,size_mb,width,height,levels,mpp,objective_power,image_id,aperio_filename,tissue_fraction_lowest,laplacian_var_tissue_lowest,tenengrad_mean_tissue_lowest
+TJ Cre Myc TMA1.svs,d2aa7eefdcee3bf5,38.58,13944,13644,3,0.5027,20,203009,TJ Cre Myc TMA1,0.2336,3704.89,25184.75
+TJ Cre Myc TMA2.svs,0d49286db24d5d5e,37.22,11952,12505,3,0.5027,20,203010,TJ Cre Myc TMA2,0.2449,5718.51,34223.72
+Jiankang TMA.svs,5c4b3f692eaa7926,93.35,25896,25513,3,0.2522,40,220024,Jiankang TMA,0.2158,1824.52,12983.97

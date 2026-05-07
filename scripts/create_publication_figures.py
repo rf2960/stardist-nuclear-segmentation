@@ -5,12 +5,17 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 from PIL import Image, ImageDraw, ImageFont
 
 
-ROOT = Path(r"C:\Users\ruoch\Desktop\CU\Research\StarDist")
-DATA_PATH = ROOT / "results_1path_analysis" / "analysis_data_1path.json"
-FIG_DIR = ROOT / "docs" / "figures"
+LOCAL_ROOT = Path(r"C:\Users\ruoch\Desktop\CU\Research\StarDist")
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DATA_PATH = LOCAL_ROOT / "results_1path_analysis" / "analysis_data_1path.json"
+JIANKANG_DATA_PATH = LOCAL_ROOT / "results_jiankang_analysis" / "analysis_data_jiankang.json"
+ONEPATH_CSV = LOCAL_ROOT / "results_1path_analysis" / "detected_cells_1path.csv"
+JIANKANG_CSV = LOCAL_ROOT / "results_jiankang_analysis" / "detected_cells_jiankang.csv"
+FIG_DIR = REPO_ROOT / "docs" / "figures"
 
 
 def load_image(b64):
@@ -34,6 +39,19 @@ def draw_polygons(image, polygons, scale=1.0, color=(255, 230, 0), width=2):
     return overlay
 
 
+def draw_cells(image, cells, scale=1.0, color=(255, 230, 0), width=2):
+    draw = ImageDraw.Draw(image)
+    for cell in cells:
+        if "boundary" in cell and len(cell["boundary"]) > 2:
+            pts = [(x * scale, y * scale) for x, y in cell["boundary"]]
+            draw.line(pts + [pts[0]], fill=color, width=width)
+        else:
+            r = max(2, min(6, np.sqrt(cell["area"]) / 4)) * scale
+            x, y = cell["x"] * scale, cell["y"] * scale
+            draw.ellipse((x - r, y - r, x + r, y + r), fill=color)
+    return image
+
+
 def save_overview(data):
     overview = load_image(data["overview"]["img"])
     draw = ImageDraw.Draw(overview)
@@ -54,15 +72,11 @@ def save_core_detail(data, core_key="core7"):
     core_num = int(core_key.replace("core", ""))
     core = data["cores"][core_key]
     image = load_image(core["img"])
-    draw = ImageDraw.Draw(image)
     font, small = get_fonts()
-    for cell in core["cells"]:
-        r = max(2, min(6, np.sqrt(cell["area"]) / 4))
-        x, y = cell["x"], cell["y"]
-        draw.ellipse((x - r, y - r, x + r, y + r), fill=(255, 230, 0))
+    image = draw_cells(image, core["cells"], width=2)
     image.thumbnail((1400, 1000), Image.Resampling.LANCZOS)
     canvas = Image.new("RGB", (image.width, image.height + 54), "white")
-    title = f"Viewer core detail: Core {core_num} ({core['total_cells']:,} detected nuclei)"
+    title = f"Viewer core detail: Core {core_num} ({core['total_cells']:,} final nuclei with mask contours)"
     d = ImageDraw.Draw(canvas)
     d.text((16, 14), title, fill=(23, 32, 51), font=font)
     canvas.paste(image, (0, 54))
@@ -133,6 +147,29 @@ def save_core_counts(data):
     plt.close(fig)
 
 
+def save_count_comparison(onepath, jiankang):
+    one_rows = onepath["analysis"]["summary"]
+    j_rows = jiankang["analysis"]["summary"]
+    labels = [f"Core {row['core']}" for row in one_rows]
+    x = np.arange(len(labels))
+    width = 0.38
+    one_counts = [row["cells"] for row in one_rows]
+    j_counts = [row["cells"] for row in j_rows]
+
+    fig, ax = plt.subplots(figsize=(9.5, 4.8), dpi=180)
+    ax.bar(x - width / 2, one_counts, width, label="1-path", color="#0f766e", edgecolor="#172033", linewidth=0.4)
+    ax.bar(x + width / 2, j_counts, width, label="Jiankang", color="#7c3aed", edgecolor="#172033", linewidth=0.4)
+    ax.set_xticks(x, labels)
+    ax.set_ylabel("Detected nuclei")
+    ax.set_title("Final Deduplicated Nuclear Counts")
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.grid(axis="y", alpha=0.18)
+    ax.legend(frameon=False)
+    fig.tight_layout()
+    fig.savefig(FIG_DIR / "core_counts_comparison.png", bbox_inches="tight")
+    plt.close(fig)
+
+
 def save_density(data):
     rows = data["analysis"]["summary"]
     labels = [f"Core {row['core']}" for row in rows]
@@ -149,6 +186,29 @@ def save_density(data):
         ax.text(i, value + max(density) * 0.015, f"{value:,.0f}", ha="center", va="bottom", fontsize=8)
     fig.tight_layout()
     fig.savefig(FIG_DIR / "density_1path.png", bbox_inches="tight")
+    plt.close(fig)
+
+
+def save_density_comparison(onepath, jiankang):
+    one_rows = onepath["analysis"]["summary"]
+    j_rows = jiankang["analysis"]["summary"]
+    labels = [f"Core {row['core']}" for row in one_rows]
+    x = np.arange(len(labels))
+    width = 0.38
+    one_density = [row["density_per_mm2"] for row in one_rows]
+    j_density = [row["density_per_mm2"] for row in j_rows]
+
+    fig, ax = plt.subplots(figsize=(9.5, 4.8), dpi=180)
+    ax.bar(x - width / 2, one_density, width, label="1-path", color="#0f766e", edgecolor="#172033", linewidth=0.4)
+    ax.bar(x + width / 2, j_density, width, label="Jiankang", color="#7c3aed", edgecolor="#172033", linewidth=0.4)
+    ax.set_xticks(x, labels)
+    ax.set_ylabel("Nuclei / mm2")
+    ax.set_title("Final Nuclear Density Comparison")
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.grid(axis="y", alpha=0.18)
+    ax.legend(frameon=False)
+    fig.tight_layout()
+    fig.savefig(FIG_DIR / "density_comparison.png", bbox_inches="tight")
     plt.close(fig)
 
 
@@ -175,16 +235,41 @@ def save_area_histogram(data):
     plt.close(fig)
 
 
+def save_boundary_point_histogram():
+    one = pd.read_csv(ONEPATH_CSV, usecols=["boundary_n_points"])
+    jiankang = pd.read_csv(JIANKANG_CSV, usecols=["boundary_n_points"])
+    bins = np.arange(4, 66, 2)
+
+    fig, ax = plt.subplots(figsize=(9, 4.8), dpi=180)
+    ax.hist(one["boundary_n_points"], bins=bins, density=True, alpha=0.62, label="1-path", color="#0f766e")
+    ax.hist(jiankang["boundary_n_points"], bins=bins, density=True, alpha=0.52, label="Jiankang", color="#7c3aed")
+    ax.axvline(one["boundary_n_points"].median(), color="#0f766e", linestyle="--", linewidth=1.4)
+    ax.axvline(jiankang["boundary_n_points"].median(), color="#7c3aed", linestyle="--", linewidth=1.4)
+    ax.set_title("Saved Boundary Polygon Detail")
+    ax.set_xlabel("Boundary points per nucleus")
+    ax.set_ylabel("Density")
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.grid(axis="y", alpha=0.18)
+    ax.legend(frameon=False)
+    fig.tight_layout()
+    fig.savefig(FIG_DIR / "boundary_point_counts.png", bbox_inches="tight")
+    plt.close(fig)
+
+
 def main():
     FIG_DIR.mkdir(parents=True, exist_ok=True)
     data = json.loads(DATA_PATH.read_text(encoding="utf-8"))
+    jiankang = json.loads(JIANKANG_DATA_PATH.read_text(encoding="utf-8"))
     save_overview(data)
     save_core_counts(data)
     save_density(data)
+    save_count_comparison(data, jiankang)
+    save_density_comparison(data, jiankang)
     save_core_detail(data, "core7")
     save_patch_grid(data, "core1")
     save_selected_patch(data, "core1", 1, 3)
     save_area_histogram(data)
+    save_boundary_point_histogram()
     print(f"Saved figures to {FIG_DIR}")
 
 

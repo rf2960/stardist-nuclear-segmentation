@@ -27,10 +27,16 @@ results_jiankang_analysis/*
 !results_1path_analysis/README.md
 !results_1path_analysis/analysis_summary_1path.csv
 !results_1path_analysis/core_counts_1path.csv
+!results_1path_analysis/slide_comparison.csv
+!results_1path_analysis/detected_cells_1path.csv
+!results_1path_analysis/1path_stardist_analysis.html
 !results_jiankang_analysis/
 !results_jiankang_analysis/README.md
 !results_jiankang_analysis/analysis_summary_jiankang.csv
 !results_jiankang_analysis/core_counts_jiankang.csv
+!results_jiankang_analysis/slide_comparison.csv
+!results_jiankang_analysis/detected_cells_jiankang.csv
+!results_jiankang_analysis/jiankang_stardist_analysis.html
 
 # Local screenshots
 *_check.png

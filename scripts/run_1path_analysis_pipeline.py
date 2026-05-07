@@ -53,6 +53,26 @@ MIN_PATCH_TISSUE_FRACTION = 0.010
 MIN_PATCH_DARK_FRACTION = 0.0015
 CELL_AREA_MIN = 20
 CELL_AREA_MAX = 900
+BOUNDARY_CSV_COLUMNS = [
+    "source_patch_row",
+    "source_patch_col",
+    "source_patch_x_model",
+    "source_patch_y_model",
+    "grid_patch_row",
+    "grid_patch_col",
+    "grid_patch_x_model",
+    "grid_patch_y_model",
+    "boundary_n_points",
+    "boundary_area_model_px",
+    "boundary_perimeter_model_px",
+    "boundary_bbox_x_min_model",
+    "boundary_bbox_y_min_model",
+    "boundary_bbox_x_max_model",
+    "boundary_bbox_y_max_model",
+    "boundary_model_json",
+    "boundary_full_json",
+    "boundary_grid_patch_json",
+]
 
 
 def encode_jpeg(image, quality=92, max_size=None):
@@ -62,6 +82,103 @@ def encode_jpeg(image, quality=92, max_size=None):
     buf = BytesIO()
     image.save(buf, format="JPEG", quality=quality, optimize=True)
     return base64.b64encode(buf.getvalue()).decode("ascii"), image.width, image.height
+
+
+def json_points(points):
+    return json.dumps(points, separators=(",", ":"))
+
+
+def contour_area_and_perimeter(points):
+    if len(points) < 3:
+        return 0.0, 0.0
+    contour = np.array(points, dtype=np.float32).reshape((-1, 1, 2))
+    return float(cv2.contourArea(contour)), float(cv2.arcLength(contour, True))
+
+
+def grid_patch_index(cell_x_model, cell_y_model, core_size_model):
+    max_index = max(int(math.ceil(core_size_model / GRID_STEP)) - 1, 0)
+    col = int(math.floor((cell_x_model + core_size_model / 2) / GRID_STEP))
+    row = int(math.floor((cell_y_model + core_size_model / 2) / GRID_STEP))
+    return max(0, min(row, max_index)), max(0, min(col, max_index))
+
+
+def boundary_record_from_points(core, patch_points, model_left, model_top, model_scale, core_size_model, cell_x_model, cell_y_model):
+    if not patch_points:
+        return {
+            "grid_patch_row": "",
+            "grid_patch_col": "",
+            "grid_patch_x_model": "",
+            "grid_patch_y_model": "",
+            "boundary_n_points": 0,
+            "boundary_area_model_px": 0,
+            "boundary_perimeter_model_px": 0,
+            "boundary_bbox_x_min_model": "",
+            "boundary_bbox_y_min_model": "",
+            "boundary_bbox_x_max_model": "",
+            "boundary_bbox_y_max_model": "",
+            "boundary_model_json": "[]",
+            "boundary_full_json": "[]",
+            "boundary_grid_patch_json": "[]",
+        }
+
+    model_points = [[round(float(x + model_left), 2), round(float(y + model_top), 2)] for x, y in patch_points]
+    full_points = [
+        [
+            round(float(core["x_full"] + x_model * model_scale), 2),
+            round(float(core["y_full"] + y_model * model_scale), 2),
+        ]
+        for x_model, y_model in model_points
+    ]
+    grid_row, grid_col = grid_patch_index(cell_x_model, cell_y_model, core_size_model)
+    grid_left = -core_size_model / 2 + grid_col * GRID_STEP
+    grid_top = -core_size_model / 2 + grid_row * GRID_STEP
+    grid_points = [[round(float(x - grid_left), 2), round(float(y - grid_top), 2)] for x, y in model_points]
+    xs = [point[0] for point in model_points]
+    ys = [point[1] for point in model_points]
+    boundary_area, boundary_perimeter = contour_area_and_perimeter(model_points)
+    return {
+        "grid_patch_row": grid_row,
+        "grid_patch_col": grid_col,
+        "grid_patch_x_model": round(float(grid_left), 2),
+        "grid_patch_y_model": round(float(grid_top), 2),
+        "boundary_n_points": len(model_points),
+        "boundary_area_model_px": round(boundary_area, 2),
+        "boundary_perimeter_model_px": round(boundary_perimeter, 2),
+        "boundary_bbox_x_min_model": round(min(xs), 2),
+        "boundary_bbox_y_min_model": round(min(ys), 2),
+        "boundary_bbox_x_max_model": round(max(xs), 2),
+        "boundary_bbox_y_max_model": round(max(ys), 2),
+        "boundary_model_json": json_points(model_points),
+        "boundary_full_json": json_points(full_points),
+        "boundary_grid_patch_json": json_points(grid_points),
+    }
+
+
+def label_boundary_points(labels, cell_id):
+    mask = (labels == cell_id).astype("uint8")
+    contours, _hierarchy = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return []
+    contour = max(contours, key=cv2.contourArea)
+    if len(contour) >= 5:
+        epsilon = max(0.35, 0.0025 * cv2.arcLength(contour, True))
+        contour = cv2.approxPolyDP(contour, epsilon, True)
+    return [[float(x), float(y)] for x, y in contour.reshape(-1, 2)]
+
+
+def cell_boundary_record(core, labels, details, cell_id, model_left, model_top, model_scale, core_size_model, cell_x_model, cell_y_model):
+    patch_points = label_boundary_points(labels, cell_id)
+    return boundary_record_from_points(
+        core, patch_points, model_left, model_top, model_scale, core_size_model, cell_x_model, cell_y_model
+    )
+
+
+def csv_has_boundary_columns(csv_path):
+    try:
+        columns = set(pd.read_csv(csv_path, nrows=0).columns)
+    except Exception:
+        return False
+    return all(column in columns for column in BOUNDARY_CSV_COLUMNS)
 
 
 def enhance_patch(patch):
@@ -351,8 +468,8 @@ def segment_slide(slide, model, cores, source_mpp):
         prob_thresh = PROB_THRESH[core_num]
         raw_count = 0
 
-        for row in range(0, core_size_model, STEP):
-            for col in range(0, core_size_model, STEP):
+        for source_patch_row, row in enumerate(range(0, core_size_model, STEP)):
+            for source_patch_col, col in enumerate(range(0, core_size_model, STEP)):
                 model_left = -core_size_model / 2 + col
                 model_top = -core_size_model / 2 + row
                 patch_center_x = model_left + PATCH_SIZE / 2
@@ -369,7 +486,7 @@ def segment_slide(slide, model, cores, source_mpp):
                 if not allowed:
                     continue
 
-                labels, _ = model.predict_instances(
+                labels, details = model.predict_instances(
                     normalize(enhance_patch(patch), 1, 99.8),
                     prob_thresh=prob_thresh,
                     nms_thresh=0.3,
@@ -383,6 +500,18 @@ def segment_slide(slide, model, cores, source_mpp):
                     cell_y_model = float(np.mean(pix[0]) + model_top)
                     if not keep_cell_for_core(core, cell_x_model, cell_y_model, patch, labels, cell_id, model_scale):
                         continue
+                    boundary_record = cell_boundary_record(
+                        core,
+                        labels,
+                        details,
+                        cell_id,
+                        model_left,
+                        model_top,
+                        model_scale,
+                        core_size_model,
+                        cell_x_model,
+                        cell_y_model,
+                    )
                     all_cells.append({
                         "core": core_num,
                         "x_full": cx + cell_x_model * model_scale,
@@ -390,6 +519,11 @@ def segment_slide(slide, model, cores, source_mpp):
                         "x_model": cell_x_model,
                         "y_model": cell_y_model,
                         "area_model_px": int(len(pix[0])),
+                        "source_patch_row": source_patch_row,
+                        "source_patch_col": source_patch_col,
+                        "source_patch_x_model": round(float(model_left), 2),
+                        "source_patch_y_model": round(float(model_top), 2),
+                        **boundary_record,
                     })
                     raw_count += 1
         print(f"  raw detections: {raw_count}", flush=True)
@@ -447,11 +581,26 @@ def export_payload(slide, model, df, cores, source_mpp, model_scale, read_size, 
 
         cells = []
         for row in core_df.itertuples(index=False):
-            cells.append({
+            cell = {
                 "x": round(((row.x_full - origin_x) / lv1_scale) * resize_factor, 1),
                 "y": round(((row.y_full - origin_y) / lv1_scale) * resize_factor, 1),
                 "area": int(row.area_model_px),
-            })
+            }
+            boundary_json = getattr(row, "boundary_full_json", "")
+            if isinstance(boundary_json, str) and boundary_json:
+                try:
+                    full_points = json.loads(boundary_json)
+                except json.JSONDecodeError:
+                    full_points = []
+                if full_points:
+                    cell["boundary"] = [
+                        [
+                            round(((point[0] - origin_x) / lv1_scale) * resize_factor, 1),
+                            round(((point[1] - origin_y) / lv1_scale) * resize_factor, 1),
+                        ]
+                        for point in full_points
+                    ]
+            cells.append(cell)
 
         payload["cores"][key] = {
             "img": region_b64,
@@ -489,14 +638,17 @@ def export_payload(slide, model, df, cores, source_mpp, model_scale, read_size, 
                     prob_thresh=PROB_THRESH[core_num],
                     nms_thresh=0.3,
                 )
-                for cell_id, coords in enumerate(details["coord"], start=1):
-                    pts = np.array(coords).T
-                    center_y = float(np.mean(pts[:, 0]) + model_top)
-                    center_x = float(np.mean(pts[:, 1]) + model_left)
+                for cell_id in range(1, labels.max() + 1):
+                    pix = np.where(labels == cell_id)
+                    if len(pix[0]) == 0:
+                        continue
+                    center_y = float(np.mean(pix[0]) + model_top)
+                    center_x = float(np.mean(pix[1]) + model_left)
                     if not keep_cell_for_core(core, center_x, center_y, patch_model, labels, cell_id, model_scale):
                         continue
-                    pts_model = [[round(float(p[1]), 1), round(float(p[0]), 1)] for p in pts]
-                    pts_hi = [[round(float(p[1] * model_scale), 1), round(float(p[0] * model_scale), 1)] for p in pts]
+                    pts = label_boundary_points(labels, cell_id)
+                    pts_model = [[round(float(p[0]), 1), round(float(p[1]), 1)] for p in pts]
+                    pts_hi = [[round(float(p[0] * model_scale), 1), round(float(p[1] * model_scale), 1)] for p in pts]
                     area = int((labels == cell_id).sum())
                     polys_model.append({"pts": pts_model, "area": area})
                     polys_hi.append({"pts": pts_hi, "area": area})
@@ -670,7 +822,7 @@ function syncTabs() {{ document.querySelectorAll(".tab").forEach(b=>b.classList.
 function canvasFor(img, draw) {{ const canvas=img.closest(".image-wrap").querySelector("canvas"); const paint=()=>{{canvas.width=img.naturalWidth; canvas.height=img.naturalHeight; draw(canvas.getContext("2d"));}}; if(img.complete) paint(); else img.onload=paint; }}
 function drawOverview(img) {{ canvasFor(img,ctx=>{{ctx.lineWidth=3; ctx.font="bold 18px Arial"; ctx.textAlign="center"; coreKeys.forEach((key,i)=>{{const c=DATA.cores[key]; ctx.strokeStyle=c.color; ctx.fillStyle=c.color; ctx.beginPath(); ctx.arc(c.cx_overview,c.cy_overview,c.r_overview,0,Math.PI*2); ctx.stroke(); ctx.fillText(`Core ${{i+1}}`,c.cx_overview,Math.max(22,c.cy_overview-c.r_overview-8));}});}}); }}
 function renderOverview() {{ const ov=DATA.overview; document.getElementById("content").innerHTML=`<div class="image-wrap"><img id="overviewImg" src="data:image/jpeg;base64,${{ov.img}}" width="${{ov.width}}" height="${{ov.height}}"><canvas class="overlay"></canvas></div>`; drawOverview(document.getElementById("overviewImg")); }}
-function renderCore() {{ const c=DATA.cores[selected]; document.getElementById("content").innerHTML=`<div class="image-wrap"><img id="coreImg" src="data:image/jpeg;base64,${{c.img}}" width="${{c.width}}" height="${{c.height}}"><canvas class="overlay"></canvas></div>`; canvasFor(document.getElementById("coreImg"),ctx=>{{ctx.fillStyle="rgba(255,230,0,.72)"; c.cells.forEach(cell=>{{const r=Math.max(1.8,Math.min(5,Math.sqrt(cell.area)/4)); ctx.beginPath(); ctx.arc(cell.x,cell.y,r,0,Math.PI*2); ctx.fill();}});}}); }}
+function renderCore() {{ const c=DATA.cores[selected]; document.getElementById("content").innerHTML=`<div class="image-wrap"><img id="coreImg" src="data:image/jpeg;base64,${{c.img}}" width="${{c.width}}" height="${{c.height}}"><canvas class="overlay"></canvas></div>`; canvasFor(document.getElementById("coreImg"),ctx=>{{ctx.strokeStyle="rgba(255,230,0,.96)"; ctx.fillStyle="rgba(255,230,0,.72)"; ctx.lineWidth=1.2; c.cells.forEach(cell=>{{if(cell.boundary&&cell.boundary.length){{ctx.beginPath(); ctx.moveTo(cell.boundary[0][0],cell.boundary[0][1]); cell.boundary.slice(1).forEach(pt=>ctx.lineTo(pt[0],pt[1])); ctx.closePath(); ctx.stroke();}} else {{const r=Math.max(1.8,Math.min(5,Math.sqrt(cell.area)/4)); ctx.beginPath(); ctx.arc(cell.x,cell.y,r,0,Math.PI*2); ctx.fill();}}}});}}); }}
 function drawPatch(img, patch, high=false, visible=showSegmentation) {{ const polys=high?patch.polys_hi:patch.polys_thumb; canvasFor(img,ctx=>{{if(!visible)return; ctx.strokeStyle=`rgba(255,230,0,${{boundaryAlpha}})`; ctx.lineWidth=high?1.8:1.1; polys.forEach(poly=>{{if(!poly.pts.length)return; ctx.beginPath(); ctx.moveTo(poly.pts[0][0],poly.pts[0][1]); poly.pts.slice(1).forEach(pt=>ctx.lineTo(pt[0],pt[1])); ctx.closePath(); ctx.stroke();}});}}); }}
 function renderPatches() {{ const group=DATA.patches[selected], patches=group.items, nCols=group.n_cols, nRows=group.n_rows; const byPos=new Map(patches.map((p,i)=>[`${{p.row}}:${{p.col}}`,{{p,i}}])); let cells=[]; for(let r=0;r<nRows;r++)for(let c=0;c<nCols;c++){{const hit=byPos.get(`${{r}}:${{c}}`); if(hit&&hit.p.n_cells>=minCells)cells.push(`<div class="patch-card" data-index="${{hit.i}}" style="grid-row:${{r+1}};grid-column:${{c+1}}"><div class="image-wrap"><img id="patch-${{hit.i}}" src="data:image/jpeg;base64,${{hit.p.img}}" width="256" height="256"><canvas class="overlay"></canvas></div><div class="patch-info"><span>row ${{hit.p.row}}, col ${{hit.p.col}}</span><strong>${{hit.p.n_cells}} nuclei</strong></div></div>`); else cells.push(`<div class="patch-card empty" style="grid-row:${{r+1}};grid-column:${{c+1}}"></div>`);}} document.getElementById("content").innerHTML=`<div class="tools"><label>Min nuclei <input id="minCells" type="range" min="0" max="250" value="${{minCells}}" step="10"></label><span>${{minCells}}</span></div><div class="patch-grid" style="grid-template-columns:repeat(${{nCols}}, minmax(160px,210px));">${{cells.join("")}}</div>`; document.getElementById("minCells").oninput=e=>{{minCells=Number(e.target.value);renderPatches();}}; patches.forEach((p,i)=>{{const img=document.getElementById(`patch-${{i}}`); if(img) drawPatch(img,p,false);}}); document.querySelectorAll(".patch-card:not(.empty)").forEach(card=>card.onclick=()=>showPatch(patches[Number(card.dataset.index)])); }}
 function repaintModal(p) {{ const img=document.getElementById("modalImg"); if(img) drawPatch(img,p,true,showSegmentation); }}
@@ -701,10 +853,12 @@ def main():
     model_scale = TARGET_MPP / source_mpp
     read_size = int(round(PATCH_SIZE * model_scale))
     csv_path = OUT_DIR / "detected_cells_1path.csv"
-    if csv_path.exists():
+    if csv_path.exists() and csv_has_boundary_columns(csv_path):
         print(f"Reusing existing segmentation CSV: {csv_path}", flush=True)
         df = pd.read_csv(csv_path)
     else:
+        if csv_path.exists():
+            print(f"Existing CSV lacks boundary polygons; regenerating: {csv_path}", flush=True)
         df, model_scale, read_size = segment_slide(slide, model, cores, source_mpp)
         df.to_csv(csv_path, index=False)
 
