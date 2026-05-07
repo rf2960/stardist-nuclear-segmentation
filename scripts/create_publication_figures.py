@@ -5,7 +5,6 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 from PIL import Image, ImageDraw, ImageFont
 
 
@@ -13,8 +12,6 @@ LOCAL_ROOT = Path(r"C:\Users\ruoch\Desktop\CU\Research\StarDist")
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DATA_PATH = LOCAL_ROOT / "results_1path_analysis" / "analysis_data_1path.json"
 JIANKANG_DATA_PATH = LOCAL_ROOT / "results_jiankang_analysis" / "analysis_data_jiankang.json"
-ONEPATH_CSV = LOCAL_ROOT / "results_1path_analysis" / "detected_cells_1path.csv"
-JIANKANG_CSV = LOCAL_ROOT / "results_jiankang_analysis" / "detected_cells_jiankang.csv"
 FIG_DIR = REPO_ROOT / "docs" / "figures"
 
 
@@ -235,27 +232,6 @@ def save_area_histogram(data):
     plt.close(fig)
 
 
-def save_boundary_point_histogram():
-    one = pd.read_csv(ONEPATH_CSV, usecols=["boundary_n_points"])
-    jiankang = pd.read_csv(JIANKANG_CSV, usecols=["boundary_n_points"])
-    bins = np.arange(4, 66, 2)
-
-    fig, ax = plt.subplots(figsize=(9, 4.8), dpi=180)
-    ax.hist(one["boundary_n_points"], bins=bins, density=True, alpha=0.62, label="1-path", color="#0f766e")
-    ax.hist(jiankang["boundary_n_points"], bins=bins, density=True, alpha=0.52, label="Jiankang", color="#7c3aed")
-    ax.axvline(one["boundary_n_points"].median(), color="#0f766e", linestyle="--", linewidth=1.4)
-    ax.axvline(jiankang["boundary_n_points"].median(), color="#7c3aed", linestyle="--", linewidth=1.4)
-    ax.set_title("Saved Boundary Polygon Detail")
-    ax.set_xlabel("Boundary points per nucleus")
-    ax.set_ylabel("Density")
-    ax.spines[["top", "right"]].set_visible(False)
-    ax.grid(axis="y", alpha=0.18)
-    ax.legend(frameon=False)
-    fig.tight_layout()
-    fig.savefig(FIG_DIR / "boundary_point_counts.png", bbox_inches="tight")
-    plt.close(fig)
-
-
 def main():
     FIG_DIR.mkdir(parents=True, exist_ok=True)
     data = json.loads(DATA_PATH.read_text(encoding="utf-8"))
@@ -269,7 +245,6 @@ def main():
     save_patch_grid(data, "core1")
     save_selected_patch(data, "core1", 1, 3)
     save_area_histogram(data)
-    save_boundary_point_histogram()
     print(f"Saved figures to {FIG_DIR}")
 
 

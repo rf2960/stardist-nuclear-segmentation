@@ -119,10 +119,6 @@ The selected review tile above is **Core 1, row 1, col 3**. The smoothed curve b
 
 ![Nuclear area histogram](docs/figures/nuclear_area_histogram.png)
 
-The saved boundary polygons are exported from the final label masks. Most cells are reconstructed with roughly 17-21 connected points, with more points used for larger or more irregular nuclei.
-
-![Boundary point counts](docs/figures/boundary_point_counts.png)
-
 ## Practical Ceiling
 
 Within the constraint of using the pretrained StarDist H&E model only, without manual labels or model fine-tuning, the current output is close to the practical best result we can expect from parameter tuning and post-processing alone. The current workflow already combines scale normalization, per-core probability thresholds, object-size filtering, tissue-signal filtering, boundary-aware core inclusion, and duplicate removal.
@@ -175,7 +171,6 @@ docs/figures/
   density_1path.png
   density_comparison.png
   nuclear_area_histogram.png
-  boundary_point_counts.png
 
 results_1path_analysis/
   1path_stardist_analysis.html        # Git LFS self-contained viewer
